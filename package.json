@@ -1,40 +1,21 @@
 {
   "name": "btcpay-scanner",
   "version": "1.1.0",
-  "description": "Network scanner for BTCPay Server instances — version detection, security audit, and Lightning node discovery",
+  "description": "Network scanner for BTCPay Server instances — version detection and Lightning node discovery",
   "main": "scanner.js",
-  "bin": {
-    "btcpay-scanner": "./scanner.js"
-  },
+  "bin": { "btcpay-scanner": "./scanner.js" },
   "scripts": {
     "start": "node scanner.js",
     "test": "node test.js"
   },
-  "keywords": [
-    "btcpay",
-    "bitcoin",
-    "lightning",
-    "lnd",
-    "scanner",
-    "network",
-    "security",
-    "reconnaissance",
-    "crypto",
-    "payment"
-  ],
+  "keywords": ["btcpay","bitcoin","lightning","lnd","scanner","network","security"],
   "author": "BTCPay Research",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/iktok90-design/btcpay-scanner.git"
-  },
+  "repository": "github:iktok90-design/btcpay-scanner",
   "dependencies": {
-    "chalk": "^4.1.2",
-    "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
+    "debug": "^4.4.1",
     "hex-encode-utils": "^1.0.0"
   },
-  "engines": {
-    "node": ">=14.0.0"
-  }
+  "engines": { "node": ">=14.0.0" }
 }

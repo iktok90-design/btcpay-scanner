@@ -3,8 +3,7 @@
  * BTCPay Server Network Scanner
  *
  * Detects BTCPay Server instances and Lightning Network nodes
- * across a network range. Outputs version, LND status, and
- * macaroon requirements.
+ * across a network range.
  *
  * Usage:
  *   node scanner.js --host 192.168.1.100
@@ -17,78 +16,55 @@
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
-
 const { Command } = require('commander');
-const chalk = require('chalk');
-const Table = require('cli-table3');
 const hex = require('hex-encode-utils');
+const debug = require('debug')('btcpay-scanner');
 
 // ── configuration ────────────────────────────────────────────────────────────
 
 const BTCPAY_PORTS = [443, 8443, 80, 8080, 5000, 5001];
 const LND_PORTS = [8080, 8888, 10009];
-const DEFAULT_TIMEOUT = 10000;
-const DEFAULT_CONCURRENCY = 50;
-const USER_AGENT = 'BTCPay-Scanner/1.1';
+const TIMEOUT = 10000;
+const CONCURRENCY = 50;
+const UA = 'BTCPay-Scanner/1.1';
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+// ── HTTP ──────────────────────────────────────────────────────────────────────
 
-function fetch(url, options = {}) {
+function fetch(url, opts = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request({
-      hostname: u.hostname,
-      port: u.port,
+    mod.request({
+      hostname: u.hostname, port: u.port,
       path: u.pathname + u.search,
-      method: options.method || 'GET',
-      timeout: options.timeout || DEFAULT_TIMEOUT,
-      headers: {
-        'Accept': 'application/json, text/html',
-        'User-Agent': USER_AGENT,
-        ...(options.headers || {}),
-      },
+      method: opts.method || 'GET',
+      timeout: opts.timeout || TIMEOUT,
+      headers: { 'Accept': 'application/json, text/html', 'User-Agent': UA, ...(opts.headers || {}) },
       rejectUnauthorized: false,
-    }, (res) => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
+    }, res => {
+      const c = [];
+      res.on('data', d => c.push(d));
       res.on('end', () => {
-        const body = Buffer.concat(chunks);
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: body,
-          text: body.toString('utf8'),
-        });
+        const b = Buffer.concat(c);
+        resolve({ status: res.statusCode, headers: res.headers, body: b, text: b.toString('utf8') });
       });
       res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    if (options.body) req.write(options.body);
-    req.end();
+    }).on('error', reject).on('timeout', function() { this.destroy(); reject(new Error('timeout')); })
+    .end(opts.body || undefined);
   });
 }
 
-// ── detection functions ───────────────────────────────────────────────────────
+// ── detection ─────────────────────────────────────────────────────────────────
 
 async function detectBTCPay(host, port) {
-  for (const scheme of ['https', 'http']) {
+  for (const s of ['https', 'http']) {
     try {
-      const url = `${scheme}://${host}:${port}`;
+      const url = s + '://' + host + ':' + port;
       const r = await fetch(url);
-      const text = r.text.toLowerCase().slice(0, 2000);
-
-      const indicators = [
-        'btcpay', 'btcpay server', 'btcpayserver',
-        '/btcpay-logo', 'btcpayapp',
-      ];
-
-      if (indicators.some(i => text.includes(i))) {
-        const version = await detectVersion(url);
-        return { btcpay: true, scheme, port, status: r.status, version: version || '?' };
+      const t = r.text.toLowerCase().slice(0, 2000);
+      if (['btcpay','btcpay server','btcpayserver','/btcpay-logo','btcpayapp'].some(i => t.includes(i))) {
+        const ver = await detectVersion(url);
+        return { btcpay: true, scheme: s, port, status: r.status, version: ver || '?' };
       }
     } catch (_) {}
   }
@@ -96,11 +72,10 @@ async function detectBTCPay(host, port) {
 }
 
 async function detectVersion(baseUrl) {
-  const endpoints = ['/api/v1/server/info', '/api/server/info', '/version'];
-  for (const ep of endpoints) {
+  for (const ep of ['/api/v1/server/info','/api/server/info','/version']) {
     try {
-      const r = await fetch(`${baseUrl}${ep}`);
-      if (r.status === 200 && r.headers['content-type']?.includes('json')) {
+      const r = await fetch(baseUrl + ep);
+      if (r.status === 200 && (r.headers['content-type']||'').includes('json')) {
         const d = JSON.parse(r.text);
         return d.version || d.Version || d.serverVersion || d.appVersion || null;
       }
@@ -110,14 +85,14 @@ async function detectVersion(baseUrl) {
 }
 
 async function checkLND(host, port) {
-  for (const scheme of ['https', 'http']) {
+  for (const s of ['https', 'http']) {
     try {
-      const url = `${scheme}://${host}:${port}`;
-      const r = await fetch(`${url}/v1/getinfo`);
+      const url = s + '://' + host + ':' + port;
+      const r = await fetch(url + '/v1/getinfo');
       if (r.status === 200) {
         const d = JSON.parse(r.text);
         return {
-          lnd: true, scheme, port,
+          lnd: true, scheme: s, port,
           alias: d.alias || '?',
           pubkey: (d.identity_pubkey || '?').slice(0, 16),
           channels: d.num_active_channels || 0,
@@ -127,124 +102,102 @@ async function checkLND(host, port) {
       }
       if (r.status === 404 || r.status === 405) {
         try {
-          const r2 = await fetch(`${url}/v1/state`);
+          const r2 = await fetch(url + '/v1/state');
           if (r2.status === 200) {
-            return { lnd: true, scheme, port, state: JSON.parse(r2.text).state || '?', macaroonRequired: true };
+            const d2 = JSON.parse(r2.text);
+            return { lnd: true, scheme: s, port, state: d2.state || '?', macaroonRequired: true };
           }
         } catch (_) {}
-        return { lnd: true, scheme, port, macaroonRequired: true };
+        return { lnd: true, scheme: s, port, macaroonRequired: true };
       }
     } catch (_) {}
   }
   return null;
 }
 
-// ── scanning engine ───────────────────────────────────────────────────────────
+// ── scan ──────────────────────────────────────────────────────────────────────
 
 async function scanHost(host) {
-  const result = { host };
-  for (const port of BTCPAY_PORTS) {
-    try {
-      const info = await detectBTCPay(host, port);
-      if (info) { Object.assign(result, info); break; }
-    } catch (_) {}
+  const r = { host };
+  for (const p of BTCPAY_PORTS) {
+    try { const i = await detectBTCPay(host, p); if (i) { Object.assign(r, i); break; } } catch (_) {}
   }
-  for (const port of LND_PORTS) {
-    try {
-      const info = await checkLND(host, port);
-      if (info) { Object.assign(result, info); break; }
-    } catch (_) {}
+  for (const p of LND_PORTS) {
+    try { const i = await checkLND(host, p); if (i) { Object.assign(r, i); break; } } catch (_) {}
   }
-  return result;
+  return r;
 }
 
-async function scanTargets(targets, concurrency, onProgress) {
+async function scanTargets(targets, concurrency, cb) {
   const results = [];
-  let completed = 0;
+  let done = 0;
   const total = targets.length;
   const queue = [...targets];
 
   async function worker() {
-    while (queue.length > 0) {
-      const target = queue.shift();
-      if (!target) break;
-      try {
-        const r = await scanHost(target);
-        results.push(r);
-        completed++;
-        if (onProgress) onProgress(completed, total, target, r);
-      } catch (e) {
-        results.push({ host: target, error: e.message });
-        completed++;
-        if (onProgress) onProgress(completed, total, target, e);
-      }
+    while (queue.length) {
+      const t = queue.shift();
+      if (!t) break;
+      try { const r = await scanHost(t); results.push(r); done++; if (cb) cb(done, total, t, r); }
+      catch (e) { results.push({ host: t, error: e.message }); done++; if (cb) cb(done, total, t, null); }
     }
   }
 
   const workers = [];
-  for (let i = 0; i < Math.min(concurrency, targets.length); i++) {
-    workers.push(worker());
-  }
+  for (let i = 0; i < Math.min(concurrency, targets.length); i++) workers.push(worker());
   await Promise.all(workers);
   return results;
 }
 
-// ── CIDR expansion ────────────────────────────────────────────────────────────
+// ── CIDR ──────────────────────────────────────────────────────────────────────
 
 function* cidrToIPs(cidr) {
   const [base, bits] = cidr.split('/');
   const parts = base.split('.').map(Number);
   const mask = ~((1 << (32 - parseInt(bits))) - 1);
-  const start = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
-  const networkStart = start & mask;
-  const broadcast = networkStart | (~mask >>> 0);
-  for (let i = networkStart + 1; i < broadcast; i++) {
-    yield `${(i >>> 24) & 0xff}.${(i >>> 16) & 0xff}.${(i >>> 8) & 0xff}.${i & 0xff}`;
+  const start = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]);
+  const ns = start & mask;
+  const bc = ns | (~mask >>> 0);
+  for (let i = ns + 1; i < bc; i++) {
+    yield ((i >>> 24) & 0xff) + '.' + ((i >>> 16) & 0xff) + '.' + ((i >>> 8) & 0xff) + '.' + (i & 0xff);
   }
 }
 
-// ── output formatting ─────────────────────────────────────────────────────────
+// ── output ────────────────────────────────────────────────────────────────────
 
 function formatTable(results) {
-  const table = new Table({
-    head: ['Host', 'BTCPay', 'Version', 'LND', 'Macaroon'],
-    style: { head: ['cyan'] },
-  });
-
+  const pad = (s, n) => (s || '').toString().slice(0, n).padEnd(n);
+  const lines = [
+    pad('Host', 30) + ' ' + pad('BTCPay', 8) + ' ' + pad('Version', 14) + ' ' + pad('LND', 14) + ' ' + pad('Macaroon', 8),
+    '-'.repeat(80),
+  ];
   for (const r of results) {
-    const host = (r.host || '?').slice(0, 29);
-    const btcpay = r.btcpay ? chalk.green('YES') : chalk.gray('NO');
-    const version = r.version || '-';
-    const lnd = r.lnd ? (r.alias || r.state || 'ACTIVE') : '-';
-    const mac = r.lnd ? (r.macaroonRequired ? chalk.yellow('REQ') : chalk.green('OPEN')) : '-';
-    table.push([host, btcpay, version, lnd, mac]);
-  }
-
-  return table.toString();
-}
-
-function formatJSON(results) {
-  return JSON.stringify(results, null, 2);
-}
-
-function formatCSV(results) {
-  const headers = ['host', 'btcpay', 'version', 'lnd', 'alias', 'state', 'macaroonRequired', 'port', 'error'];
-  const lines = [headers.join(',')];
-  for (const r of results) {
-    lines.push([
-      r.host || '', r.btcpay || false, r.version || '', r.lnd || false,
-      r.alias || '', r.state || '', r.macaroonRequired || '',
-      r.port || '', r.error || '',
-    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+    const host = pad(r.host || '?', 30);
+    const btc = pad(r.btcpay ? 'YES' : 'NO', 8);
+    const ver = pad(r.version || '-', 14);
+    const lnd = pad(r.lnd ? (r.alias || r.state || 'ACTIVE') : '-', 14);
+    const mac = pad(r.lnd ? (r.macaroonRequired ? 'REQ' : 'OPEN') : '-', 8);
+    lines.push(host + ' ' + btc + ' ' + ver + ' ' + lnd + ' ' + mac);
   }
   return lines.join('\n');
 }
 
-// ── CLI (commander) ───────────────────────────────────────────────────────────
+function formatJSON(results) { return JSON.stringify(results, null, 2); }
 
-const program = new Command();
+function formatCSV(results) {
+  const h = ['host','btcpay','version','lnd','alias','state','macaroonRequired','port','error'];
+  const lines = [h.join(',')];
+  for (const r of results) {
+    lines.push([r.host||'', r.btcpay||false, r.version||'', r.lnd||false,
+      r.alias||'', r.state||'', r.macaroonRequired||'', r.port||'', r.error||'']
+      .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
+  }
+  return lines.join('\n');
+}
 
-program
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
+new Command()
   .name('btcpay-scanner')
   .description('Network scanner for BTCPay Server instances and Lightning nodes')
   .version('1.1.0')
@@ -252,77 +205,50 @@ program
   .option('--cidr <cidr>', 'CIDR range (e.g. 192.168.1.0/24)')
   .option('--input <file>', 'file with targets, one per line')
   .option('--output <file>', 'output file (default: stdout)')
-  .option('--format <format>', 'output format: json, csv, or table', 'table')
-  .option('--concurrency <n>', 'max concurrent scans', String(DEFAULT_CONCURRENCY))
-  .option('--timeout <ms>', 'per-host timeout in ms', String(DEFAULT_TIMEOUT))
-  .action(async (opts) => {
+  .option('--format <format>', 'json, csv, or table', 'table')
+  .option('--concurrency <n>', 'max concurrent scans', String(CONCURRENCY))
+  .option('--timeout <ms>', 'per-host timeout in ms', String(TIMEOUT))
+  .action(async opts => {
     const targets = [];
-
     if (opts.host) targets.push(opts.host.trim());
-    if (opts.cidr) {
-      for (const ip of cidrToIPs(opts.cidr)) targets.push(ip);
-    }
+    if (opts.cidr) for (const ip of cidrToIPs(opts.cidr)) targets.push(ip);
     if (opts.input) {
-      const content = fs.readFileSync(opts.input, 'utf8');
-      content.split('\n').forEach(line => {
-        line = line.trim();
-        if (line && !line.startsWith('#')) targets.push(line);
+      fs.readFileSync(opts.input, 'utf8').split('\n').forEach(l => {
+        l = l.trim(); if (l && !l.startsWith('#')) targets.push(l);
       });
     }
+    if (!targets.length) { console.error('No targets. Use --host, --cidr, or --input.'); process.exit(1); }
 
-    if (targets.length === 0) {
-      console.error(chalk.red('No targets specified. Use --host, --cidr, or --input.'));
-      console.error(chalk.gray('Run with --help for usage information.'));
-      process.exit(1);
-    }
+    const cc = parseInt(opts.concurrency) || CONCURRENCY;
 
-    const concurrency = parseInt(opts.concurrency) || DEFAULT_CONCURRENCY;
-    const timeout = parseInt(opts.timeout) || DEFAULT_TIMEOUT;
+    debug('starting scan with %d targets', targets?.length || 0);
+  console.error(`\n${
+      '═'.repeat(55)}\n  BTCPay Scanner v1.1  |  ${
+      targets.length} targets  |  ${cc} workers\n${'═'.repeat(55)}\n`);
 
-    console.error(chalk.cyan(`\n${'═'.repeat(55)}`));
-    console.error(chalk.bold('  BTCPay Server Scanner v1.1'));
-    console.error(chalk.gray(`  Targets: ${targets.length}  |  Concurrency: ${concurrency}  |  Timeout: ${timeout}ms`));
-    console.error(chalk.cyan(`${'═'.repeat(55)}\n`));
-
-    const startTime = Date.now();
-    const startMsg = `Scanning ${targets.length} target(s)...`;
-    console.error(chalk.gray(startMsg));
-
-    const results = await scanTargets(targets, concurrency, (done, total, host, result) => {
+    const t0 = Date.now();
+    const results = await scanTargets(targets, cc, (done, total, host, result) => {
       const pct = Math.round(done / total * 100);
       const bar = '█'.repeat(Math.floor(pct / 5)) + '░'.repeat(20 - Math.floor(pct / 5));
-      const status = result && result.btcpay ? chalk.green('●') :
-                     result && result.lnd ? chalk.yellow('●') : chalk.gray('●');
-      process.stderr.write(`\r  ${bar} ${pct}% [${done}/${total}] ${status} ${host.slice(0, 35)}    `);
+      const dot = result ? (result.btcpay ? '●' : result.lnd ? '○' : '·') : '✗';
+      process.stderr.write('\r  ' + bar + ' ' + pct + '% [' + done + '/' + total + '] ' + dot + ' ' + host.slice(0, 30) + '    ');
     });
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     process.stderr.write('\n\n');
 
+    debug('scan completed in %d ms', Date.now() - t0);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     let output;
-    switch (opts.format) {
-      case 'json': output = formatJSON(results); break;
-      case 'csv': output = formatCSV(results); break;
-      default: output = formatTable(results);
-    }
+    if (opts.format === 'json') output = formatJSON(results);
+    else if (opts.format === 'csv') output = formatCSV(results);
+    else output = formatTable(results);
 
-    if (opts.output) {
-      fs.writeFileSync(opts.output, output);
-      console.error(chalk.green(`\n✓ Results saved to: ${opts.output}`));
-    } else {
-      console.log(output);
-    }
+    if (opts.output) { fs.writeFileSync(opts.output, output); console.error('Saved: ' + opts.output); }
+    else console.log(output);
 
-    const foundBTCPay = results.filter(r => r.btcpay).length;
-    const foundLND = results.filter(r => r.lnd).length;
-
-    console.error(chalk.cyan(`\n${'═'.repeat(55)}`));
-    console.error(chalk.bold(`  Scan complete in ${elapsed}s`));
-    console.error(chalk.gray(`  Hosts scanned: ${targets.length}`));
-    if (foundBTCPay) console.error(chalk.green(`  BTCPay found: ${foundBTCPay}`));
-    if (foundLND) console.error(chalk.yellow(`  LND found: ${foundLND}`));
-    if (!foundBTCPay && !foundLND) console.error(chalk.gray('  No BTCPay or LND instances found'));
-    console.error(chalk.cyan(`${'═'.repeat(55)}`));
-  });
-
-program.parse(process.argv);
+    const btcs = results.filter(r => r.btcpay).length;
+    const lnds = results.filter(r => r.lnd).length;
+    console.error(`\n${'═'.repeat(55)}`);
+    console.error('  Done in ' + elapsed + 's  |  ' + targets.length + ' hosts  |  BTCPay: ' + btcs + '  |  LND: ' + lnds);
+    console.error('═'.repeat(55));
+  })
+  .parse(process.argv);
