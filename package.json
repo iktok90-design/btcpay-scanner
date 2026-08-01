@@ -1,7 +1,7 @@
 {
   "name": "btcpay-scanner",
   "version": "1.2.0",
-  "description": "Network scanner for BTCPay Server instances — version detection and Lightning node discovery",
+  "description": "Network scanner for BTCPay Server instances — version detection, SSRF CVE auditor (< 2.4.2), and Lightning node discovery",
   "main": "scanner.js",
   "bin": {
     "btcpay-scanner": "./scanner.js"
@@ -12,12 +12,22 @@
   },
   "keywords": [
     "btcpay",
+    "btcpayserver",
     "bitcoin",
-    "lightning",
+    "lightning-network",
     "lnd",
     "scanner",
-    "network",
-    "security"
+    "network-scanner",
+    "security-audit",
+    "vulnerability-scanner",
+    "cve",
+    "ssrf",
+    "reconnaissance",
+    "penetration-testing",
+    "crypto",
+    "payment",
+    "macaroon",
+    "node-discovery"
   ],
   "author": "BTCPay Research",
   "license": "MIT",
