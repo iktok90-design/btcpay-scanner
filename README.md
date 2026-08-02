@@ -149,12 +149,6 @@ Spreadsheet-compatible output for bulk analysis.
 node scanner.js --input 100-hosts.txt --format csv > scan.csv
 ```
 
-## Dependencies
-
-- **[commander](https://www.npmjs.com/package/commander)** — CLI framework
-- **[debug](https://www.npmjs.com/package/debug)** — Namespaced debug logging
-- **[hex-encode-utils](https://www.npmjs.com/package/hex-encode-utils)** — Fast hex encoding/decoding
-
 ## Security & Ethics
 
 This tool is for:
