@@ -160,13 +160,6 @@ This tool is for:
 access to computer systems is illegal under laws including the Computer Fraud
 and Abuse Act (CFAA).
 
-## 👥 Contributors
-
-| Contributor | Role |
-|---|---|
-| [@iktok90-design](https://github.com/iktok90-design) | 🔍 Core development, SSRF research, tooling |
-| Claude (Anthropic) | 🤖 AI-assisted code generation, CVE analysis |
-
 ## License
 
 MIT License — See [LICENSE](LICENSE) for details.
