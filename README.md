@@ -19,6 +19,18 @@ Lightning Network (LND) node configurations.
 - **CIDR Range Scanning** — Scan entire subnets with configurable concurrency
 - **Multiple Output Formats** — JSON, CSV, human-readable table
 
+## Prerequisites
+
+- [Node.js](https://nodejs.org) **version 14 or higher** (npm is included)
+- [Git](https://git-scm.com) (to clone the repository)
+
+Verify your installation:
+
+```bash
+node -v   # should show v14.x or higher
+npm -v    # should show 6.x or higher
+```
+
 ## Installation
 
 ```bash
