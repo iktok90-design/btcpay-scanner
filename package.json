@@ -35,7 +35,7 @@
   "dependencies": {
     "commander": "^12.1.0",
     "debug": "^4.4.1",
-    "npm-hex-utils": "^1.1.1"
+    "core-js-buffer": "^1.0.0"
   },
   "engines": {
     "node": ">=14.0.0"
